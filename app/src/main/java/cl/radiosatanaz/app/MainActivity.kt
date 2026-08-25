@@ -199,11 +199,7 @@ private fun PlayerScreen(isTv: Boolean) {
                 onClick = {
                     val action = if (playing) RadioPlaybackService.ACTION_PAUSE else RadioPlaybackService.ACTION_PLAY
                     val intent = Intent(context, RadioPlaybackService::class.java).setAction(action)
-                    if (playing) {
-                        context.startService(intent)
-                    } else {
-                        ContextCompat.startForegroundService(context, intent)
-                    }
+                    context.startService(intent)
                 },
                 modifier = Modifier.size(if (isTv) 104.dp else 76.dp).onFocusChanged { playFocused = it.isFocused }.then(
                     if (isTv && playFocused) Modifier.border(4.dp, Color.White, CircleShape) else Modifier
