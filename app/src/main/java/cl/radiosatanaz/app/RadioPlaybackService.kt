@@ -1,5 +1,6 @@
 package cl.radiosatanaz.app
 
+import android.content.Intent
 import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -33,6 +34,8 @@ object RadioPlaybackState {
 class RadioPlaybackService : MediaSessionService() {
 
     companion object {
+        const val ACTION_PLAY = "cl.radiosatanaz.app.PLAY"
+        const val ACTION_PAUSE = "cl.radiosatanaz.app.PAUSE"
         private const val STREAM_URL = "https://stream.zeno.fm/fbf9aexghzzuv"
         private const val LOGO_URL = "https://radiosatanaz.ozzylatorcl.workers.dev/assets/logo-radio-s474n4zz-transparent.png"
     }
@@ -87,9 +90,28 @@ class RadioPlaybackService : MediaSessionService() {
             )
             .build()
 
+    private fun playRadio() {
+        if (player.mediaItemCount == 0) {
+            player.setMediaItem(buildRadioItem())
+        }
+        if (player.playbackState == Player.STATE_IDLE || player.playerError != null) {
+            player.prepare()
+        }
+        player.play()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_PLAY -> playRadio()
+            ACTION_PAUSE -> player.pause()
+        }
+        super.onStartCommand(intent, flags, startId)
+        return START_STICKY
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
-    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
+    override fun onTaskRemoved(rootIntent: Intent?) {
         if (!player.isPlaying) stopSelf()
         super.onTaskRemoved(rootIntent)
     }
