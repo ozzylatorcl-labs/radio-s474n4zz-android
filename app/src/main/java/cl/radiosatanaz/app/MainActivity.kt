@@ -1,5 +1,6 @@
 package cl.radiosatanaz.app
 
+import android.content.ComponentName
 import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -31,8 +32,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.core.content.ContextCompat
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -44,7 +47,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-private const val STREAM_URL = "https://stream.zeno.fm/fbf9aexghzzuv"
 private const val METADATA_URL = "https://api.zeno.fm/mounts/metadata/subscribe/fbf9aexghzzuv"
 private const val DEMON_URL = "https://radiosatanaz.ozzylatorcl.workers.dev/assets/demon.png"
 private const val LOGO_URL = "https://radiosatanaz.ozzylatorcl.workers.dev/assets/logo-radio-s474n4zz-transparent.png"
@@ -78,11 +80,8 @@ private fun RadioApp() {
         )
     ) {
         Crossfade(targetState = splash, label = "radio-root") { loading ->
-            if (loading) {
-                SplashScreen(isTv = isTv) { splash = false }
-            } else {
-                PlayerScreen(isTv = isTv)
-            }
+            if (loading) SplashScreen(isTv) { splash = false }
+            else PlayerScreen(isTv)
         }
     }
 }
@@ -101,19 +100,12 @@ private fun SplashScreen(isTv: Boolean, onDone: () -> Unit) {
     }
 
     Box(
-        Modifier
-            .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    listOf(Color(0xFF3D0005), Color(0xFF090303), Color.Black)
-                )
-            )
+        Modifier.fillMaxSize().background(
+            Brush.radialGradient(listOf(Color(0xFF3D0005), Color(0xFF090303), Color.Black))
+        )
     ) {
         Column(
-            Modifier
-                .align(Alignment.Center)
-                .padding(24.dp)
-                .widthIn(max = if (isTv) 700.dp else 420.dp),
+            Modifier.align(Alignment.Center).padding(24.dp).widthIn(max = if (isTv) 700.dp else 420.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             AsyncImage(
@@ -121,15 +113,8 @@ private fun SplashScreen(isTv: Boolean, onDone: () -> Unit) {
                 contentDescription = "Diablo original Radio S474N4zZ",
                 modifier = Modifier.size(if (isTv) 300.dp else 210.dp)
             )
-
             Spacer(Modifier.height(18.dp))
-
-            Text(
-                "RADIO S474N4zZ",
-                color = Color.White,
-                fontSize = if (isTv) 48.sp else 30.sp,
-                fontWeight = FontWeight.Black
-            )
+            Text("RADIO S474N4zZ", color = Color.White, fontSize = if (isTv) 48.sp else 30.sp, fontWeight = FontWeight.Black)
             Text(
                 "DESDE VILLA ALEMANA PARA EL MUNDO",
                 color = Color(0xFFCFCFCF),
@@ -137,7 +122,6 @@ private fun SplashScreen(isTv: Boolean, onDone: () -> Unit) {
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
-
             Spacer(Modifier.height(30.dp))
             LinearProgressIndicator(
                 progress = { progress.value },
@@ -148,278 +132,157 @@ private fun SplashScreen(isTv: Boolean, onDone: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             Text(
                 if (progress.value < .7f) "CARGANDO..." else "CONECTANDO CON EL INFIERNO...",
-                color = Color(0xFFE51C25),
-                fontSize = if (isTv) 17.sp else 11.sp,
-                fontWeight = FontWeight.Bold
+                color = Color(0xFFE51C25), fontSize = if (isTv) 17.sp else 11.sp, fontWeight = FontWeight.Bold
             )
         }
-
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color(0xFFFF2028).copy(alpha = flash.value * .30f))
-        )
+        Box(Modifier.fillMaxSize().background(Color(0xFFFF2028).copy(alpha = flash.value * .30f)))
     }
 }
 
 @Composable
 private fun PlayerScreen(isTv: Boolean) {
     val context = LocalContext.current
-    val player = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(STREAM_URL))
-            prepare()
-        }
-    }
-
+    var controller by remember { mutableStateOf<MediaController?>(null) }
     var playing by remember { mutableStateOf(false) }
     var playFocused by remember { mutableStateOf(false) }
     var track by remember { mutableStateOf(TrackInfo()) }
 
-    LaunchedEffect(Unit) {
-        listenToZenoMetadata { artist, title ->
-            track = TrackInfo(
-                title = title.ifBlank { "Radio S474N4zZ" },
-                artist = artist.ifBlank { "Radio S474N4zZ" },
-                album = "Buscando álbum...",
-                coverUrl = LOGO_URL
-            )
-
-            val enriched = lookupTrackOnDeezer(artist, title)
-            if (enriched != null && track.title == title) {
-                track = enriched
-            } else if (track.title == title) {
-                track = track.copy(album = "")
+    DisposableEffect(Unit) {
+        val token = SessionToken(context, ComponentName(context, RadioPlaybackService::class.java))
+        val future = MediaController.Builder(context, token).buildAsync()
+        future.addListener({
+            runCatching { future.get() }.onSuccess { c ->
+                controller = c
+                playing = c.isPlaying
+                c.addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        playing = isPlaying
+                    }
+                })
             }
+        }, ContextCompat.getMainExecutor(context))
+
+        onDispose {
+            controller?.release()
+            controller = null
         }
     }
 
-    DisposableEffect(player) {
-        val listener = object : androidx.media3.common.Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                playing = isPlaying
-            }
-        }
-        player.addListener(listener)
-        onDispose {
-            player.removeListener(listener)
-            player.release()
+    LaunchedEffect(Unit) {
+        listenToZenoMetadata { artist, title ->
+            track = TrackInfo(title = title, artist = artist, album = "Buscando álbum...", coverUrl = LOGO_URL)
+            val enriched = lookupTrackOnDeezer(artist, title)
+            if (enriched != null && track.title == title) track = enriched
+            else if (track.title == title) track = track.copy(album = "")
         }
     }
 
     Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color(0xFF030303))
-            .padding(if (isTv) 36.dp else 18.dp)
+        Modifier.fillMaxSize().background(Color(0xFF030303)).padding(if (isTv) 36.dp else 18.dp)
     ) {
         Column(
-            Modifier
-                .fillMaxSize()
-                .widthIn(max = if (isTv) 900.dp else 520.dp)
-                .align(Alignment.Center),
+            Modifier.fillMaxSize().widthIn(max = if (isTv) 900.dp else 520.dp).align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             AsyncImage(
                 model = track.coverUrl.ifBlank { LOGO_URL },
                 contentDescription = "Carátula de ${track.title}",
-                modifier = Modifier
-                    .size(if (isTv) 320.dp else 230.dp)
-                    .background(Color(0xFF080808), RoundedCornerShape(24.dp)),
+                modifier = Modifier.size(if (isTv) 320.dp else 230.dp).background(Color(0xFF080808), RoundedCornerShape(24.dp)),
                 contentScale = ContentScale.Crop
             )
-
             Spacer(Modifier.height(24.dp))
-            Text(
-                "AHORA SUENA",
-                color = Color(0xFFE51C25),
-                fontWeight = FontWeight.Black,
-                fontSize = if (isTv) 20.sp else 14.sp
-            )
+            Text("AHORA SUENA", color = Color(0xFFE51C25), fontWeight = FontWeight.Black, fontSize = if (isTv) 20.sp else 14.sp)
             Spacer(Modifier.height(8.dp))
-
-            Text(
-                track.title,
-                color = Color.White,
-                fontSize = if (isTv) 38.sp else 26.sp,
-                fontWeight = FontWeight.Black,
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            Text(
-                track.artist,
-                color = Color(0xFFE51C25),
-                fontSize = if (isTv) 24.sp else 18.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
+            Text(track.title, color = Color.White, fontSize = if (isTv) 38.sp else 26.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(track.artist, color = Color(0xFFE51C25), fontSize = if (isTv) 24.sp else 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (track.album.isNotBlank()) {
                 Spacer(Modifier.height(5.dp))
-                Text(
-                    track.album,
-                    color = Color(0xFFB8B8B8),
-                    fontSize = if (isTv) 17.sp else 13.sp,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Text(track.album, color = Color(0xFFB8B8B8), fontSize = if (isTv) 17.sp else 13.sp, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-
             Spacer(Modifier.height(9.dp))
             Text("● EN VIVO · 128 kbps", color = Color(0xFFCCCCCC), fontSize = 13.sp)
             Spacer(Modifier.height(24.dp))
 
             Button(
-                onClick = {
-                    if (player.isPlaying) player.pause() else player.play()
-                },
-                modifier = Modifier
-                    .size(if (isTv) 104.dp else 76.dp)
-                    .onFocusChanged { playFocused = it.isFocused }
-                    .then(
-                        if (isTv && playFocused) {
-                            Modifier.border(4.dp, Color.White, CircleShape)
-                        } else {
-                            Modifier
-                        }
-                    ),
+                onClick = { controller?.let { if (it.isPlaying) it.pause() else it.play() } },
+                enabled = controller != null,
+                modifier = Modifier.size(if (isTv) 104.dp else 76.dp).onFocusChanged { playFocused = it.isFocused }.then(
+                    if (isTv && playFocused) Modifier.border(4.dp, Color.White, CircleShape) else Modifier
+                ),
                 shape = CircleShape,
                 contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isTv && playFocused) Color(0xFFFF333B) else Color(0xFFE51C25),
-                    contentColor = Color.White
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = if (isTv && playFocused) Color(0xFFFF333B) else Color(0xFFE51C25), contentColor = Color.White)
             ) {
-                Icon(
-                    imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (playing) "Pausar" else "Reproducir",
-                    modifier = Modifier.size(if (isTv) 56.dp else 40.dp)
-                )
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pausar" else "Reproducir", Modifier.size(if (isTv) 56.dp else 40.dp))
             }
 
             Spacer(Modifier.height(18.dp))
             Text(
-                if (isTv) {
-                    if (playFocused) "PULSA OK PARA ${if (playing) "PAUSAR" else "REPRODUCIR"}" else "USA EL CONTROL REMOTO · D-PAD / OK"
-                } else {
-                    "RADIO · NOTICIAS · PROGRAMACIÓN · HISTORIA"
-                },
-                color = if (isTv && playFocused) Color.White else Color(0xFF8D8D8D),
-                fontSize = if (isTv) 15.sp else 11.sp,
-                fontWeight = if (isTv && playFocused) FontWeight.Bold else FontWeight.Normal,
-                textAlign = TextAlign.Center
+                if (isTv) "USA EL CONTROL REMOTO · D-PAD / OK" else "BAJA LA CORTINA DE ANDROID PARA CONTROLAR LA RADIO",
+                color = Color(0xFF8D8D8D), fontSize = if (isTv) 15.sp else 11.sp, textAlign = TextAlign.Center
             )
         }
     }
 }
 
-private suspend fun listenToZenoMetadata(
-    onTrack: suspend (artist: String, title: String) -> Unit
-) {
+private suspend fun listenToZenoMetadata(onTrack: suspend (artist: String, title: String) -> Unit) {
     var lastStreamTitle = ""
-
     while (currentCoroutineContext().isActive) {
         try {
             withContext(Dispatchers.IO) {
                 val connection = (URL(METADATA_URL).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 15_000
-                    readTimeout = 0
-                    setRequestProperty("Accept", "text/event-stream")
-                    setRequestProperty("Cache-Control", "no-cache")
+                    requestMethod = "GET"; connectTimeout = 15_000; readTimeout = 0
+                    setRequestProperty("Accept", "text/event-stream"); setRequestProperty("Cache-Control", "no-cache")
                 }
-
                 try {
                     connection.inputStream.bufferedReader().use { reader ->
                         while (currentCoroutineContext().isActive) {
                             val line = reader.readLine() ?: break
                             if (!line.startsWith("data:")) continue
-
-                            val raw = line.removePrefix("data:").trim()
-                            val streamTitle = runCatching {
-                                JSONObject(raw).optString("streamTitle")
-                            }.getOrDefault("")
-
+                            val streamTitle = runCatching { JSONObject(line.removePrefix("data:").trim()).optString("streamTitle") }.getOrDefault("")
                             if (streamTitle.isBlank() || streamTitle == lastStreamTitle) continue
                             lastStreamTitle = streamTitle
-
                             val (artist, title) = splitStreamTitle(streamTitle)
-                            withContext(Dispatchers.Main) {
-                                onTrack(artist, title)
-                            }
+                            withContext(Dispatchers.Main) { onTrack(artist, title) }
                         }
                     }
-                } finally {
-                    connection.disconnect()
-                }
+                } finally { connection.disconnect() }
             }
-        } catch (_: Exception) {
-            // Si Zeno corta la conexión SSE, reintentamos automáticamente.
-        }
-
+        } catch (_: Exception) {}
         delay(3_000)
     }
 }
 
 private fun splitStreamTitle(value: String): Pair<String, String> {
-    val separators = listOf(" - ", " – ", " — ")
-    for (separator in separators) {
+    for (separator in listOf(" - ", " – ", " — ")) {
         val index = value.indexOf(separator)
-        if (index > 0) {
-            val artist = value.substring(0, index).trim()
-            val title = value.substring(index + separator.length).trim()
-            return artist to title
-        }
+        if (index > 0) return value.substring(0, index).trim() to value.substring(index + separator.length).trim()
     }
     return "Radio S474N4zZ" to value.trim()
 }
 
-private suspend fun lookupTrackOnDeezer(
-    artist: String,
-    title: String
-): TrackInfo? = withContext(Dispatchers.IO) {
+private suspend fun lookupTrackOnDeezer(artist: String, title: String): TrackInfo? = withContext(Dispatchers.IO) {
     if (title.isBlank()) return@withContext null
-
     runCatching {
-        val query = URLEncoder.encode(
-            listOf(artist, title).filter { it.isNotBlank() }.joinToString(" "),
-            "UTF-8"
-        )
+        val query = URLEncoder.encode(listOf(artist, title).filter { it.isNotBlank() }.joinToString(" "), "UTF-8")
         val connection = (URL("https://api.deezer.com/search?q=$query&limit=1").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 8_000
-            readTimeout = 8_000
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "RadioS474N4zZ-Android")
+            requestMethod = "GET"; connectTimeout = 8_000; readTimeout = 8_000
+            setRequestProperty("Accept", "application/json"); setRequestProperty("User-Agent", "RadioS474N4zZ-Android")
         }
-
         try {
             if (connection.responseCode !in 200..299) return@runCatching null
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
-            val root = JSONObject(body)
-            val data = root.optJSONArray("data") ?: return@runCatching null
+            val data = JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).optJSONArray("data") ?: return@runCatching null
             if (data.length() == 0) return@runCatching null
-
             val item = data.optJSONObject(0) ?: return@runCatching null
-            val albumObject = item.optJSONObject("album")
+            val album = item.optJSONObject("album")
             val artistObject = item.optJSONObject("artist")
-
             TrackInfo(
                 title = item.optString("title").ifBlank { title },
                 artist = artistObject?.optString("name").orEmpty().ifBlank { artist.ifBlank { "Radio S474N4zZ" } },
-                album = albumObject?.optString("title").orEmpty(),
-                coverUrl = albumObject?.optString("cover_xl").orEmpty()
-                    .ifBlank { albumObject?.optString("cover_big").orEmpty() }
-                    .ifBlank { LOGO_URL }
+                album = album?.optString("title").orEmpty(),
+                coverUrl = album?.optString("cover_xl").orEmpty().ifBlank { album?.optString("cover_big").orEmpty() }.ifBlank { LOGO_URL }
             )
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }.getOrNull()
 }
