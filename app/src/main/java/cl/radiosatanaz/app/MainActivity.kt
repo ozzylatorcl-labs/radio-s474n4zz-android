@@ -60,7 +60,6 @@ private data class TrackInfo(
 )
 
 class MainActivity : ComponentActivity() {
-
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -168,9 +167,7 @@ private fun PlayerScreen(isTv: Boolean) {
         }
     }
 
-    Box(
-        Modifier.fillMaxSize().background(Color(0xFF030303)).padding(if (isTv) 36.dp else 18.dp)
-    ) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF030303)).padding(if (isTv) 36.dp else 18.dp)) {
         Column(
             Modifier.fillMaxSize().widthIn(max = if (isTv) 900.dp else 520.dp).align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -199,7 +196,11 @@ private fun PlayerScreen(isTv: Boolean) {
                 onClick = {
                     val action = if (playing) RadioPlaybackService.ACTION_PAUSE else RadioPlaybackService.ACTION_PLAY
                     val intent = Intent(context, RadioPlaybackService::class.java).setAction(action)
-                    context.startService(intent)
+                    if (action == RadioPlaybackService.ACTION_PLAY) {
+                        ContextCompat.startForegroundService(context, intent)
+                    } else {
+                        context.startService(intent)
+                    }
                 },
                 modifier = Modifier.size(if (isTv) 104.dp else 76.dp).onFocusChanged { playFocused = it.isFocused }.then(
                     if (isTv && playFocused) Modifier.border(4.dp, Color.White, CircleShape) else Modifier
@@ -223,7 +224,7 @@ private fun PlayerScreen(isTv: Boolean) {
                 if (isTv) {
                     if (playFocused) "PULSA OK PARA ${if (playing) "PAUSAR" else "REPRODUCIR"}" else "USA EL CONTROL REMOTO · D-PAD / OK"
                 } else {
-                    "LA RADIO SIGUE SONANDO AUNQUE SALGAS DE LA APP · CONTROL ARRIBA EN ANDROID"
+                    "CONTROL MULTIMEDIA EN LA CORTINA DE ANDROID · PLAY / PAUSA · SILENCIAR · DETENER"
                 },
                 color = if (isTv && playFocused) Color.White else Color(0xFF8D8D8D),
                 fontSize = if (isTv) 15.sp else 11.sp,
@@ -264,8 +265,7 @@ private suspend fun listenToZenoMetadata(onTrack: suspend (artist: String, title
                     connection.disconnect()
                 }
             }
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) { }
         delay(3_000)
     }
 }

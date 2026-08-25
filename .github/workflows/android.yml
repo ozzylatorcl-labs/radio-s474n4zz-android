@@ -63,6 +63,7 @@ jobs:
                   break
               pos += 12 + n
           assert seen_ihdr and seen_idat and seen_iend, 'PNG incompleto'
+          echo = None
           print('Icono PNG oficial válido:', len(data), 'bytes')
           PY
 
@@ -83,19 +84,19 @@ jobs:
           echo "Icono oficial confirmado dentro del APK"
 
       - name: Preparar APK con nombre final
-        run: cp app/build/outputs/apk/debug/app-debug.apk Radio-S474N4zZ-V2.6.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Radio-S474N4zZ-V2.7.apk
 
       - name: Publicar APK como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: Radio-S474N4zZ-V2.6
-          path: Radio-S474N4zZ-V2.6.apk
+          name: Radio-S474N4zZ-V2.7
+          path: Radio-S474N4zZ-V2.7.apk
 
       - name: Publicar descarga permanente en GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.6
-          name: Radio S474N4zZ V2.6
-          body: "APK oficial Radio S474N4zZ V2.6 para Android y Android TV."
-          files: Radio-S474N4zZ-V2.6.apk
+          tag_name: v2.7
+          name: Radio S474N4zZ V2.7
+          body: "APK Radio S474N4zZ V2.7: reproductor multimedia visible en la cortina de Android, Play/Pausa, Silenciar y Detener/Salir."
+          files: Radio-S474N4zZ-V2.7.apk
           overwrite_files: true

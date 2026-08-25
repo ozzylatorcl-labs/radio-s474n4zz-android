@@ -12,8 +12,8 @@ android {
         applicationId = "cl.radiosatanaz.radio"
         minSdk = 23
         targetSdk = 35
-        versionCode = 26
-        versionName = "2.6"
+        versionCode = 27
+        versionName = "2.7"
     }
 
     buildFeatures { compose = true }
@@ -34,8 +34,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
-    implementation("androidx.media3:media3-exoplayer:1.7.1")
-    implementation("androidx.media3:media3-session:1.7.1")
+    implementation("androidx.media3:media3-exoplayer:1.9.3")
+    implementation("androidx.media3:media3-session:1.9.3")
     implementation("io.coil-kt.coil3:coil-compose:3.2.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.2.0")
 }

@@ -13,6 +13,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
@@ -25,12 +26,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -42,13 +43,8 @@ object RadioPlaybackState {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
-    internal fun setPlaying(value: Boolean) {
-        _isPlaying.value = value
-    }
-
-    internal fun setError(value: String?) {
-        _error.value = value
-    }
+    internal fun setPlaying(value: Boolean) { _isPlaying.value = value }
+    internal fun setError(value: String?) { _error.value = value }
 }
 
 @UnstableApi
@@ -59,6 +55,7 @@ class RadioPlaybackService : MediaSessionService() {
         const val ACTION_PAUSE = "cl.radiosatanaz.app.PAUSE"
         const val ACTION_STOP = "cl.radiosatanaz.app.STOP"
         const val ACTION_TOGGLE_MUTE = "cl.radiosatanaz.app.TOGGLE_MUTE"
+
         private const val STREAM_URL = "https://stream.zeno.fm/fbf9aexghzzuv"
         private const val METADATA_URL = "https://api.zeno.fm/mounts/metadata/subscribe/fbf9aexghzzuv"
         private const val LOGO_URL = "https://radiosatanaz.ozzylatorcl.workers.dev/assets/logo-radio-s474n4zz-transparent.png"
@@ -76,6 +73,14 @@ class RadioPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this)
+                .setChannelId("radio_s474n4zz_playback")
+                .setChannelName(R.string.media_playback_channel_name)
+                .setNotificationId(474)
+                .build()
+        )
 
         player = ExoPlayer.Builder(this).build().apply {
             setAudioAttributes(
@@ -103,33 +108,39 @@ class RadioPlaybackService : MediaSessionService() {
             })
         }
 
-        val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
         val openAppPendingIntent = PendingIntent.getActivity(
             this,
             474,
-            openAppIntent,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopButton = CommandButton.Builder()
-            .setDisplayName("Detener / salir")
-            .setIconResId(R.drawable.ic_stop_notification)
-            .setSessionCommand(stopCommand)
+        val muteButton = CommandButton.Builder(CommandButton.ICON_VOLUME_OFF)
+            .setDisplayName("Silenciar / activar sonido")
+            .setSessionCommand(muteCommand)
+            .setSlots(CommandButton.SLOT_BACK)
             .build()
 
-        val muteButton = CommandButton.Builder()
-            .setDisplayName("Silenciar / activar sonido")
-            .setIconResId(R.drawable.ic_volume_off_notification)
-            .setSessionCommand(muteCommand)
+        val stopButton = CommandButton.Builder(CommandButton.ICON_STOP)
+            .setDisplayName("Detener / salir")
+            .setSessionCommand(stopCommand)
+            .setSlots(CommandButton.SLOT_FORWARD)
             .build()
+
+        val buttons = listOf(muteButton, stopButton)
 
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(openAppPendingIntent)
             .setCallback(SessionCallback())
-            .setCustomLayout(listOf(stopButton, muteButton))
+            .setMediaButtonPreferences(buttons)
+            .setCustomLayout(buttons)
             .build()
+
+        mediaSession?.let { session ->
+            if (!isSessionAdded(session)) addSession(session)
+        }
 
         serviceScope.launch {
             listenToZenoMetadata { artist, title ->
@@ -143,20 +154,20 @@ class RadioPlaybackService : MediaSessionService() {
     private fun buildRadioItem(
         title: String = "Radio S474N4zZ",
         artist: String = "Rock & Metal en vivo"
-    ): MediaItem =
-        MediaItem.Builder()
-            .setMediaId("radio-s474n4zz-live")
-            .setUri(STREAM_URL)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .setArtist(artist)
-                    .setAlbumTitle("Radio S474N4zZ · Desde Villa Alemana para el mundo")
-                    .setArtworkUri(Uri.parse(LOGO_URL))
-                    .setIsPlayable(true)
-                    .build()
-            )
-            .build()
+    ): MediaItem = MediaItem.Builder()
+        .setMediaId("radio-s474n4zz-live")
+        .setUri(STREAM_URL)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(title)
+                .setArtist(artist)
+                .setAlbumTitle("Radio S474N4zZ · Desde Villa Alemana para el mundo")
+                .setArtworkUri(Uri.parse(LOGO_URL))
+                .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
+                .setIsPlayable(true)
+                .build()
+        )
+        .build()
 
     private fun updateNotificationMetadata(artist: String, title: String) {
         if (title.isBlank()) return
@@ -175,6 +186,7 @@ class RadioPlaybackService : MediaSessionService() {
     private fun playRadio() {
         if (player.mediaItemCount == 0) {
             player.setMediaItem(buildRadioItem())
+            player.prepare()
         }
         if (player.playbackState == Player.STATE_IDLE || player.playerError != null) {
             player.prepare()
@@ -199,13 +211,13 @@ class RadioPlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_PLAY -> playRadio()
             ACTION_PAUSE -> player.pause()
             ACTION_STOP -> stopRadio()
             ACTION_TOGGLE_MUTE -> toggleMute()
         }
-        super.onStartCommand(intent, flags, startId)
         return START_STICKY
     }
 
@@ -246,18 +258,16 @@ class RadioPlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo,
             customCommand: SessionCommand,
             args: Bundle
-        ): ListenableFuture<SessionResult> {
-            return when (customCommand.customAction) {
-                SESSION_ACTION_STOP -> {
-                    stopRadio()
-                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-                }
-                SESSION_ACTION_MUTE -> {
-                    toggleMute()
-                    Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-                }
-                else -> super.onCustomCommand(session, controller, customCommand, args)
+        ): ListenableFuture<SessionResult> = when (customCommand.customAction) {
+            SESSION_ACTION_STOP -> {
+                stopRadio()
+                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
+            SESSION_ACTION_MUTE -> {
+                toggleMute()
+                Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
+            else -> super.onCustomCommand(session, controller, customCommand, args)
         }
     }
 
