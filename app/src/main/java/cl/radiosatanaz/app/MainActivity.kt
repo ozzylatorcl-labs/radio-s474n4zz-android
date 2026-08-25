@@ -23,20 +23,38 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 
 private const val STREAM_URL = "https://stream.zeno.fm/fbf9aexghzzuv"
+private const val METADATA_URL = "https://api.zeno.fm/mounts/metadata/subscribe/fbf9aexghzzuv"
 private const val DEMON_URL = "https://radiosatanaz.ozzylatorcl.workers.dev/assets/demon.png"
 private const val LOGO_URL = "https://radiosatanaz.ozzylatorcl.workers.dev/assets/logo-radio-s474n4zz-transparent.png"
+
+private data class TrackInfo(
+    val title: String = "Esperando información de la canción...",
+    val artist: String = "Radio S474N4zZ",
+    val album: String = "",
+    val coverUrl: String = LOGO_URL
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -153,8 +171,28 @@ private fun PlayerScreen(isTv: Boolean) {
             prepare()
         }
     }
+
     var playing by remember { mutableStateOf(false) }
     var playFocused by remember { mutableStateOf(false) }
+    var track by remember { mutableStateOf(TrackInfo()) }
+
+    LaunchedEffect(Unit) {
+        listenToZenoMetadata { artist, title ->
+            track = TrackInfo(
+                title = title.ifBlank { "Radio S474N4zZ" },
+                artist = artist.ifBlank { "Radio S474N4zZ" },
+                album = "Buscando álbum...",
+                coverUrl = LOGO_URL
+            )
+
+            val enriched = lookupTrackOnDeezer(artist, title)
+            if (enriched != null && track.title == title) {
+                track = enriched
+            } else if (track.title == title) {
+                track = track.copy(album = "")
+            }
+        }
+    }
 
     DisposableEffect(player) {
         val listener = object : androidx.media3.common.Player.Listener {
@@ -184,30 +222,58 @@ private fun PlayerScreen(isTv: Boolean) {
             verticalArrangement = Arrangement.Center
         ) {
             AsyncImage(
-                model = LOGO_URL,
-                contentDescription = "Logo Radio S474N4zZ",
+                model = track.coverUrl.ifBlank { LOGO_URL },
+                contentDescription = "Carátula de ${track.title}",
                 modifier = Modifier
-                    .size(if (isTv) 280.dp else 220.dp)
-                    .background(Color(0xFF080808), RoundedCornerShape(24.dp))
+                    .size(if (isTv) 320.dp else 230.dp)
+                    .background(Color(0xFF080808), RoundedCornerShape(24.dp)),
+                contentScale = ContentScale.Crop
             )
 
             Spacer(Modifier.height(24.dp))
-            Text("AHORA SUENA", color = Color(0xFFE51C25), fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(8.dp))
             Text(
-                "RADIO S474N4zZ",
+                "AHORA SUENA",
+                color = Color(0xFFE51C25),
+                fontWeight = FontWeight.Black,
+                fontSize = if (isTv) 20.sp else 14.sp
+            )
+            Spacer(Modifier.height(8.dp))
+
+            Text(
+                track.title,
                 color = Color.White,
                 fontSize = if (isTv) 38.sp else 26.sp,
-                fontWeight = FontWeight.Black
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
+
             Text(
-                "Rock & Metal en vivo",
+                track.artist,
                 color = Color(0xFFE51C25),
-                fontSize = if (isTv) 24.sp else 18.sp
+                fontSize = if (isTv) 24.sp else 18.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            Spacer(Modifier.height(8.dp))
+
+            if (track.album.isNotBlank()) {
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    track.album,
+                    color = Color(0xFFB8B8B8),
+                    fontSize = if (isTv) 17.sp else 13.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(Modifier.height(9.dp))
             Text("● EN VIVO · 128 kbps", color = Color(0xFFCCCCCC), fontSize = 13.sp)
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(24.dp))
 
             Button(
                 onClick = {
@@ -251,4 +317,109 @@ private fun PlayerScreen(isTv: Boolean) {
             )
         }
     }
+}
+
+private suspend fun listenToZenoMetadata(
+    onTrack: suspend (artist: String, title: String) -> Unit
+) {
+    var lastStreamTitle = ""
+
+    while (currentCoroutineContext().isActive) {
+        try {
+            withContext(Dispatchers.IO) {
+                val connection = (URL(METADATA_URL).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 15_000
+                    readTimeout = 0
+                    setRequestProperty("Accept", "text/event-stream")
+                    setRequestProperty("Cache-Control", "no-cache")
+                }
+
+                try {
+                    connection.inputStream.bufferedReader().use { reader ->
+                        while (currentCoroutineContext().isActive) {
+                            val line = reader.readLine() ?: break
+                            if (!line.startsWith("data:")) continue
+
+                            val raw = line.removePrefix("data:").trim()
+                            val streamTitle = runCatching {
+                                JSONObject(raw).optString("streamTitle")
+                            }.getOrDefault("")
+
+                            if (streamTitle.isBlank() || streamTitle == lastStreamTitle) continue
+                            lastStreamTitle = streamTitle
+
+                            val (artist, title) = splitStreamTitle(streamTitle)
+                            withContext(Dispatchers.Main) {
+                                onTrack(artist, title)
+                            }
+                        }
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+        } catch (_: Exception) {
+            // Si Zeno corta la conexión SSE, reintentamos automáticamente.
+        }
+
+        delay(3_000)
+    }
+}
+
+private fun splitStreamTitle(value: String): Pair<String, String> {
+    val separators = listOf(" - ", " – ", " — ")
+    for (separator in separators) {
+        val index = value.indexOf(separator)
+        if (index > 0) {
+            val artist = value.substring(0, index).trim()
+            val title = value.substring(index + separator.length).trim()
+            return artist to title
+        }
+    }
+    return "Radio S474N4zZ" to value.trim()
+}
+
+private suspend fun lookupTrackOnDeezer(
+    artist: String,
+    title: String
+): TrackInfo? = withContext(Dispatchers.IO) {
+    if (title.isBlank()) return@withContext null
+
+    runCatching {
+        val query = URLEncoder.encode(
+            listOf(artist, title).filter { it.isNotBlank() }.joinToString(" "),
+            "UTF-8"
+        )
+        val connection = (URL("https://api.deezer.com/search?q=$query&limit=1").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8_000
+            readTimeout = 8_000
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "RadioS474N4zZ-Android")
+        }
+
+        try {
+            if (connection.responseCode !in 200..299) return@runCatching null
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            val root = JSONObject(body)
+            val data = root.optJSONArray("data") ?: return@runCatching null
+            if (data.length() == 0) return@runCatching null
+
+            val item = data.optJSONObject(0) ?: return@runCatching null
+            val albumObject = item.optJSONObject("album")
+            val artistObject = item.optJSONObject("artist")
+
+            TrackInfo(
+                title = item.optString("title").ifBlank { title },
+                artist = artistObject?.optString("name").orEmpty().ifBlank { artist.ifBlank { "Radio S474N4zZ" } },
+                album = albumObject?.optString("title").orEmpty(),
+                coverUrl = albumObject?.optString("cover_xl").orEmpty()
+                    .ifBlank { albumObject?.optString("cover_big").orEmpty() }
+                    .ifBlank { LOGO_URL }
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }.getOrNull()
 }
