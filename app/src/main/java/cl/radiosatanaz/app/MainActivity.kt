@@ -1,11 +1,15 @@
 package cl.radiosatanaz.app
 
-import android.content.ComponentName
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -33,9 +37,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.media3.common.Player
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -59,9 +60,21 @@ private data class TrackInfo(
 )
 
 class MainActivity : ComponentActivity() {
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
         setContent { RadioApp() }
     }
 }
@@ -142,31 +155,9 @@ private fun SplashScreen(isTv: Boolean, onDone: () -> Unit) {
 @Composable
 private fun PlayerScreen(isTv: Boolean) {
     val context = LocalContext.current
-    var controller by remember { mutableStateOf<MediaController?>(null) }
-    var playing by remember { mutableStateOf(false) }
+    val playing by RadioPlaybackState.isPlaying.collectAsState()
     var playFocused by remember { mutableStateOf(false) }
     var track by remember { mutableStateOf(TrackInfo()) }
-
-    DisposableEffect(Unit) {
-        val token = SessionToken(context, ComponentName(context, RadioPlaybackService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
-        future.addListener({
-            runCatching { future.get() }.onSuccess { c ->
-                controller = c
-                playing = c.isPlaying
-                c.addListener(object : Player.Listener {
-                    override fun onIsPlayingChanged(isPlaying: Boolean) {
-                        playing = isPlaying
-                    }
-                })
-            }
-        }, ContextCompat.getMainExecutor(context))
-
-        onDispose {
-            controller?.release()
-            controller = null
-        }
-    }
 
     LaunchedEffect(Unit) {
         listenToZenoMetadata { artist, title ->
@@ -205,22 +196,43 @@ private fun PlayerScreen(isTv: Boolean) {
             Spacer(Modifier.height(24.dp))
 
             Button(
-                onClick = { controller?.let { if (it.isPlaying) it.pause() else it.play() } },
-                enabled = controller != null,
+                onClick = {
+                    val action = if (playing) RadioPlaybackService.ACTION_PAUSE else RadioPlaybackService.ACTION_PLAY
+                    val intent = Intent(context, RadioPlaybackService::class.java).setAction(action)
+                    if (playing) {
+                        context.startService(intent)
+                    } else {
+                        ContextCompat.startForegroundService(context, intent)
+                    }
+                },
                 modifier = Modifier.size(if (isTv) 104.dp else 76.dp).onFocusChanged { playFocused = it.isFocused }.then(
                     if (isTv && playFocused) Modifier.border(4.dp, Color.White, CircleShape) else Modifier
                 ),
                 shape = CircleShape,
                 contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = if (isTv && playFocused) Color(0xFFFF333B) else Color(0xFFE51C25), contentColor = Color.White)
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isTv && playFocused) Color(0xFFFF333B) else Color(0xFFE51C25),
+                    contentColor = Color.White
+                )
             ) {
-                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pausar" else "Reproducir", Modifier.size(if (isTv) 56.dp else 40.dp))
+                Icon(
+                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    if (playing) "Pausar" else "Reproducir",
+                    Modifier.size(if (isTv) 56.dp else 40.dp)
+                )
             }
 
             Spacer(Modifier.height(18.dp))
             Text(
-                if (isTv) "USA EL CONTROL REMOTO · D-PAD / OK" else "BAJA LA CORTINA DE ANDROID PARA CONTROLAR LA RADIO",
-                color = Color(0xFF8D8D8D), fontSize = if (isTv) 15.sp else 11.sp, textAlign = TextAlign.Center
+                if (isTv) {
+                    if (playFocused) "PULSA OK PARA ${if (playing) "PAUSAR" else "REPRODUCIR"}" else "USA EL CONTROL REMOTO · D-PAD / OK"
+                } else {
+                    "LA RADIO SIGUE SONANDO AUNQUE SALGAS DE LA APP · CONTROL ARRIBA EN ANDROID"
+                },
+                color = if (isTv && playFocused) Color.White else Color(0xFF8D8D8D),
+                fontSize = if (isTv) 15.sp else 11.sp,
+                fontWeight = if (isTv && playFocused) FontWeight.Bold else FontWeight.Normal,
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -232,24 +244,32 @@ private suspend fun listenToZenoMetadata(onTrack: suspend (artist: String, title
         try {
             withContext(Dispatchers.IO) {
                 val connection = (URL(METADATA_URL).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"; connectTimeout = 15_000; readTimeout = 0
-                    setRequestProperty("Accept", "text/event-stream"); setRequestProperty("Cache-Control", "no-cache")
+                    requestMethod = "GET"
+                    connectTimeout = 15_000
+                    readTimeout = 0
+                    setRequestProperty("Accept", "text/event-stream")
+                    setRequestProperty("Cache-Control", "no-cache")
                 }
                 try {
                     connection.inputStream.bufferedReader().use { reader ->
                         while (currentCoroutineContext().isActive) {
                             val line = reader.readLine() ?: break
                             if (!line.startsWith("data:")) continue
-                            val streamTitle = runCatching { JSONObject(line.removePrefix("data:").trim()).optString("streamTitle") }.getOrDefault("")
+                            val streamTitle = runCatching {
+                                JSONObject(line.removePrefix("data:").trim()).optString("streamTitle")
+                            }.getOrDefault("")
                             if (streamTitle.isBlank() || streamTitle == lastStreamTitle) continue
                             lastStreamTitle = streamTitle
                             val (artist, title) = splitStreamTitle(streamTitle)
                             withContext(Dispatchers.Main) { onTrack(artist, title) }
                         }
                     }
-                } finally { connection.disconnect() }
+                } finally {
+                    connection.disconnect()
+                }
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
         delay(3_000)
     }
 }
@@ -267,8 +287,11 @@ private suspend fun lookupTrackOnDeezer(artist: String, title: String): TrackInf
     runCatching {
         val query = URLEncoder.encode(listOf(artist, title).filter { it.isNotBlank() }.joinToString(" "), "UTF-8")
         val connection = (URL("https://api.deezer.com/search?q=$query&limit=1").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"; connectTimeout = 8_000; readTimeout = 8_000
-            setRequestProperty("Accept", "application/json"); setRequestProperty("User-Agent", "RadioS474N4zZ-Android")
+            requestMethod = "GET"
+            connectTimeout = 8_000
+            readTimeout = 8_000
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "RadioS474N4zZ-Android")
         }
         try {
             if (connection.responseCode !in 200..299) return@runCatching null
@@ -283,6 +306,8 @@ private suspend fun lookupTrackOnDeezer(artist: String, title: String): TrackInf
                 album = album?.optString("title").orEmpty(),
                 coverUrl = album?.optString("cover_xl").orEmpty().ifBlank { album?.optString("cover_big").orEmpty() }.ifBlank { LOGO_URL }
             )
-        } finally { connection.disconnect() }
+        } finally {
+            connection.disconnect()
+        }
     }.getOrNull()
 }
