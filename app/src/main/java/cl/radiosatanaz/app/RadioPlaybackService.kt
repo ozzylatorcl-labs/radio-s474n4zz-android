@@ -1,6 +1,5 @@
 package cl.radiosatanaz.app
 
-import android.content.Intent
 import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -19,16 +18,21 @@ object RadioPlaybackState {
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
     internal fun setPlaying(value: Boolean) {
         _isPlaying.value = value
+    }
+
+    internal fun setError(value: String?) {
+        _error.value = value
     }
 }
 
 class RadioPlaybackService : MediaSessionService() {
 
     companion object {
-        const val ACTION_PLAY = "cl.radiosatanaz.app.PLAY"
-        const val ACTION_PAUSE = "cl.radiosatanaz.app.PAUSE"
         private const val STREAM_URL = "https://stream.zeno.fm/fbf9aexghzzuv"
         private const val LOGO_URL = "https://radiosatanaz.ozzylatorcl.workers.dev/assets/logo-radio-s474n4zz-transparent.png"
     }
@@ -48,17 +52,19 @@ class RadioPlaybackService : MediaSessionService() {
                 true
             )
             setHandleAudioBecomingNoisy(true)
-            setWakeMode(C.WAKE_MODE_NETWORK)
+            setWakeMode(C.WAKE_MODE_LOCAL)
             setMediaItem(buildRadioItem())
             prepare()
 
             addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     RadioPlaybackState.setPlaying(isPlaying)
+                    if (isPlaying) RadioPlaybackState.setError(null)
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
                     RadioPlaybackState.setPlaying(false)
+                    RadioPlaybackState.setError("${error.errorCodeName}: ${error.message.orEmpty()}")
                 }
             })
         }
@@ -81,29 +87,9 @@ class RadioPlaybackService : MediaSessionService() {
             )
             .build()
 
-    private fun playRadio() {
-        if (player.mediaItemCount == 0) {
-            player.setMediaItem(buildRadioItem())
-        }
-        if (player.playbackState == Player.STATE_IDLE || player.playerError != null) {
-            player.prepare()
-        }
-        player.playWhenReady = true
-        player.play()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_PLAY -> playRadio()
-            ACTION_PAUSE -> player.pause()
-        }
-        super.onStartCommand(intent, flags, startId)
-        return START_STICKY
-    }
-
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
+    override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         if (!player.isPlaying) stopSelf()
         super.onTaskRemoved(rootIntent)
     }
