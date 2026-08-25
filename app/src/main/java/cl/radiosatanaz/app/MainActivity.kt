@@ -9,6 +9,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
@@ -152,6 +154,7 @@ private fun PlayerScreen(isTv: Boolean) {
         }
     }
     var playing by remember { mutableStateOf(false) }
+    var playFocused by remember { mutableStateOf(false) }
 
     DisposableEffect(player) {
         val listener = object : androidx.media3.common.Player.Listener {
@@ -210,23 +213,40 @@ private fun PlayerScreen(isTv: Boolean) {
                 onClick = {
                     if (player.isPlaying) player.pause() else player.play()
                 },
-                modifier = Modifier.size(if (isTv) 96.dp else 76.dp),
+                modifier = Modifier
+                    .size(if (isTv) 104.dp else 76.dp)
+                    .onFocusChanged { playFocused = it.isFocused }
+                    .then(
+                        if (isTv && playFocused) {
+                            Modifier.border(4.dp, Color.White, CircleShape)
+                        } else {
+                            Modifier
+                        }
+                    ),
                 shape = CircleShape,
                 contentPadding = PaddingValues(0.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE51C25))
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isTv && playFocused) Color(0xFFFF333B) else Color(0xFFE51C25),
+                    contentColor = Color.White
+                )
             ) {
                 Icon(
                     imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (playing) "Pausar" else "Reproducir",
-                    modifier = Modifier.size(if (isTv) 52.dp else 40.dp)
+                    modifier = Modifier.size(if (isTv) 56.dp else 40.dp)
                 )
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(18.dp))
             Text(
-                if (isTv) "ANDROID TV · CONTROL REMOTO COMPATIBLE" else "RADIO · NOTICIAS · PROGRAMACIÓN · HISTORIA",
-                color = Color(0xFF8D8D8D),
+                if (isTv) {
+                    if (playFocused) "PULSA OK PARA ${if (playing) "PAUSAR" else "REPRODUCIR"}" else "USA EL CONTROL REMOTO · D-PAD / OK"
+                } else {
+                    "RADIO · NOTICIAS · PROGRAMACIÓN · HISTORIA"
+                },
+                color = if (isTv && playFocused) Color.White else Color(0xFF8D8D8D),
                 fontSize = if (isTv) 15.sp else 11.sp,
+                fontWeight = if (isTv && playFocused) FontWeight.Bold else FontWeight.Normal,
                 textAlign = TextAlign.Center
             )
         }
