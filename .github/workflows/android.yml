@@ -36,5 +36,5 @@ jobs:
       - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
-          name: Radio-S474N4zZ-V1-debug
+          name: Radio-S474N4zZ-V2-debug
           path: app/build/outputs/apk/debug/app-debug.apk
