@@ -30,11 +30,57 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
+      - name: Descargar y validar icono oficial
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            "https://radiosatanaz.ozzylatorcl.workers.dev/assets/logo-radio-s474n4zz-transparent.png" \
+            -o app/src/main/res/drawable/launcher_icon.png
+
+          python3 - <<'PY'
+          import struct, zlib
+          p = 'app/src/main/res/drawable/launcher_icon.png'
+          data = open(p, 'rb').read()
+          assert data[:8] == b'\x89PNG\r\n\x1a\n', 'Firma PNG inválida'
+          pos = 8
+          seen_ihdr = seen_idat = seen_iend = False
+          while pos < len(data):
+              assert pos + 12 <= len(data), 'PNG truncado'
+              n = struct.unpack('>I', data[pos:pos+4])[0]
+              typ = data[pos+4:pos+8]
+              chunk = data[pos+8:pos+8+n]
+              crc = struct.unpack('>I', data[pos+8+n:pos+12+n])[0]
+              assert len(chunk) == n, 'Chunk PNG truncado'
+              assert (zlib.crc32(typ + chunk) & 0xffffffff) == crc, f'CRC inválido en {typ!r}'
+              if typ == b'IHDR': seen_ihdr = True
+              if typ == b'IDAT': seen_idat = True
+              if typ == b'IEND':
+                  seen_iend = True
+                  break
+              pos += 12 + n
+          assert seen_ihdr and seen_idat and seen_iend, 'PNG incompleto'
+          print('Icono PNG oficial válido:', len(data), 'bytes')
+          PY
+
+          for d in mipmap-mdpi mipmap-hdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            mkdir -p "app/src/main/res/$d"
+            cp app/src/main/res/drawable/launcher_icon.png "app/src/main/res/$d/ic_launcher.png"
+          done
+
       - name: Compilar APK
         run: gradle :app:assembleDebug --stacktrace
+
+      - name: Verificar icono dentro del APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -p app/build/outputs/apk/debug/app-debug.apk res/drawable/launcher_icon.png > /tmp/launcher_icon.png
+          cmp -s /tmp/launcher_icon.png app/src/main/res/drawable/launcher_icon.png
+          echo "Icono oficial confirmado dentro del APK"
 
       - name: Publicar APK
         uses: actions/upload-artifact@v4
         with:
-          name: Radio-S474N4zZ-V2-debug
+          name: Radio-S474N4zZ-V2.2-icon-ok
           path: app/build/outputs/apk/debug/app-debug.apk
