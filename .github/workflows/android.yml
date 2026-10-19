@@ -33,14 +33,10 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
-      - name: Descargar y validar icono oficial
+      - name: Validar icono oficial del repositorio
         shell: bash
         run: |
           set -euo pipefail
-          curl -L --fail --retry 3 \
-            "https://radiosatanaz.ozzylatorcl.workers.dev/assets/logo-radio-s474n4zz-transparent.png" \
-            -o app/src/main/res/drawable/launcher_icon.png
-
           python3 - <<'PY'
           import struct, zlib
           p = 'app/src/main/res/drawable/launcher_icon.png'
@@ -63,7 +59,6 @@ jobs:
                   break
               pos += 12 + n
           assert seen_ihdr and seen_idat and seen_iend, 'PNG incompleto'
-          echo = None
           print('Icono PNG oficial válido:', len(data), 'bytes')
           PY
 
@@ -84,19 +79,21 @@ jobs:
           echo "Icono oficial confirmado dentro del APK"
 
       - name: Preparar APK con nombre final
-        run: cp app/build/outputs/apk/debug/app-debug.apk Radio-S474N4zZ-V2.7.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Radio-S474N4zZ-V2.8.apk
 
       - name: Publicar APK como artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: Radio-S474N4zZ-V2.7
-          path: Radio-S474N4zZ-V2.7.apk
+          name: Radio-S474N4zZ-V2.8
+          path: Radio-S474N4zZ-V2.8.apk
 
       - name: Publicar descarga permanente en GitHub Releases
+        if: vars.PUBLISH_ANDROID_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.7
-          name: Radio S474N4zZ V2.7
-          body: "APK Radio S474N4zZ V2.7: reproductor multimedia visible en la cortina de Android, Play/Pausa, Silenciar y Detener/Salir."
-          files: Radio-S474N4zZ-V2.7.apk
+          tag_name: v2.8
+          name: Radio S474N4zZ V2.8
+          body: "APK Radio S474N4zZ V2.8 con icono circular transparente y nombre corregidos."
+          files: Radio-S474N4zZ-V2.8.apk
           overwrite_files: true
+
