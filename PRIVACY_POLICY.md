@@ -34,4 +34,4 @@ Si cambian las funciones de la aplicación o sus prácticas de privacidad, esta 
 
 ## Contacto
 
-Para consultas sobre privacidad, escribe a **gonzamessina@gmail.com**.
+Para consultas sobre privacidad, escribe a **ozzylatorcl@gmail.com**.
