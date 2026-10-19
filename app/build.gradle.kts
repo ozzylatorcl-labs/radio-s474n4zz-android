@@ -12,8 +12,8 @@ android {
         applicationId = "cl.radiosatanaz.radio"
         minSdk = 23
         targetSdk = 35
-        versionCode = 27
-        versionName = "2.7"
+        versionCode = 28
+        versionName = "2.8"
     }
 
     buildFeatures { compose = true }
@@ -39,3 +39,4 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-compose:3.2.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.2.0")
 }
+
