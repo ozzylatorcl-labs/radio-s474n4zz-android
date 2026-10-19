@@ -88,7 +88,7 @@ jobs:
           path: Radio-S474N4zZ-V2.8.apk
 
       - name: Publicar descarga permanente en GitHub Releases
-        if: github.ref == 'refs/heads/main'
+        if: vars.PUBLISH_ANDROID_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.8
